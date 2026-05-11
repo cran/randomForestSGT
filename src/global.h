@@ -1,0 +1,26 @@
+#ifndef RF_GLOBAL_H
+#define RF_GLOBAL_H
+#define SG_OPT_THREAD       0x00000001 
+#define SG_OPT_OUTC_TYPE    0x00000002 
+#define SG_OPT_SWTCH_TWO    0x00000004 
+#define SG_OPT_SWTCH_THREE  0x00000008 
+#define SG_OPT_SWTCH_FOUR   0x00000010 
+#define SG_OPT_SWTCH_FIVE   0x00000020 
+#define SG_OPT_SWTCH_SIX    0x00000040 
+#define SG_OPT_SWTCH_SEVEN  0x00000080 
+#define SG_OPT_SWTCH_EIGHT  0x00000100 
+#define SG_OPT_SWTCH_NINE   0x00000200 
+#define SG_OPT_REAL_TIME    0x00008000 
+#define REGR_CDL    1
+#define CLAS_CDL    2
+#define REGR_CRT    3
+#define CLAS_CRT    4
+#define RAND_CRT    5
+#define SG_SURV_TDC 6
+#define ROOT 0x00
+#define OUTC_CART   0x01
+#define OUTC_LASSO  0x02
+#define SG_EPSILON 1.0e-9
+#define SG_THREADV_NFOLD 0
+#define SG_THREADV_NTREE 1
+#endif
