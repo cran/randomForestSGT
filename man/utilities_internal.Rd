@@ -4,8 +4,6 @@
 \alias{filter.rfsgt}
 \alias{filter.custom.rfsgt}
 
-\alias{get.beta}
-
 \alias{make.baselearner}
 
 \alias{tune.hcut}
@@ -29,12 +27,6 @@
     \item{\code{filter.rfsgt} and \code{filter.custom.rfsgt}}{Character
       vector of variables or generated base-learner terms retained by the
       filtering step.}
-
-    \item{\code{get.beta}}{A list containing \code{beta}, \code{betaZ},
-      \code{lasso.percent}, \code{predicted}, and \code{partial}.  These
-      components summarize forest-averaged local coefficients, splitting
-      scores, the percentage of lasso terminal-node fits, reconstructed
-      predictions, and partial term contributions.}
 
     \item{\code{make.baselearner}}{A data frame or matrix containing the
       original predictors together with generated polynomial or

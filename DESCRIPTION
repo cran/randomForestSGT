@@ -1,6 +1,6 @@
 Package: randomForestSGT
-Version: 1.0.0
-Date: 2026-05-05
+Version: 2.0.0
+Date: 2026-11-16
 Title: Random Forest Super Greedy Trees
 Authors@R: c(person("Min", "Lu", email = "luminwin@gmail.com", role = "aut"),
   person("Udaya B.", "Kogalur", email = "ubk@kogalur.com", role = c("aut", "cre")),
@@ -28,6 +28,6 @@ Description: Implements random forest Super Greedy Trees (SGTs) for
 License: GPL (>= 3)
 URL: https://ishwaran.org/
 NeedsCompilation: yes
-Packaged: 2026-05-05 21:52:24 UTC; kogalur
+Packaged: 2026-11-16 14:42:09 UTC; kogalur
 Repository: CRAN
-Date/Publication: 2026-05-11 18:50:07 UTC
+Date/Publication: 2026-11-16 16:10:02 UTC

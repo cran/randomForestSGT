@@ -12,23 +12,25 @@
 rfsgt(formula,
       data,
       ntree = if (hcut == 0) 500 else 100,
-      hcut = 1,
+      hcut = 2,
       treesize = NULL,
       nodesize = NULL,
       filter = (hcut > 1),
-      bsf = if (hcut > 0) "oob" else "inbag",
+      bsf = if (hcut > 0 && isFALSE(node.center)) "oob" else "inbag",
       keep.only = NULL,
       fast = TRUE,
       pure.lasso = FALSE,
       eps = .005,
       maxit = 500,
       nfolds = 10,
-      block.size = 10,
+      block.size = 1,
       bootstrap = c("by.root", "none", "by.user"),
       samptype = c("swor", "swr"),  samp = NULL, membership = TRUE,
       sampsize = if (samptype == "swor") function(x){x * .632} else function(x){x},
+      node.center = TRUE,
       seed = NULL,
       do.trace = FALSE,
+      node.restrict = TRUE,
       ...)
 }
 
@@ -41,30 +43,36 @@ rfsgt(formula,
   \item{ntree}{Number of trees to grow.}
 
   \item{hcut}{Integer value indexing type of parametric regression model
-    to use for splitting.  See details below.}
+    to use for splitting.  The default 2 uses linear and quadratic terms;
+    3 and 4 add pairwise interactions and cubic terms and were the most
+    accurate in benchmarks.  See details below.}
 
-  \item{treesize}{Function specifying upper bound for size of tree
-    (number of terminal nodes) where first input is \code{n} sample size
-    and second input is \code{hcut}.  Can also be supplied as an integer
-    value and defaults to an internal function if unspecified.}
+  \item{treesize}{Upper bound for the size of a tree (number of
+    terminal nodes): an integer, or a function of the sample size
+    \code{n} and of \code{hcut}.  The default is
+    \code{min(1000, max(200, n/5))} for \code{hcut} 0 and 1, and
+    \code{min(25, n/5)} for \code{hcut} 2 and above: with the restricted
+    score, trees of 25 terminal nodes were as accurate on average as trees
+    of 100 over twelve datasets and grow faster.}
 
   \item{nodesize}{Minumum size of terminal node.  Set internally if
     not specified.}
 
   \item{filter}{Logical value specifying whether dimension reduction
-    (filtering) of features should be performed.Can also be specified
+    (filtering) of features should be performed. Can also be specified
     using the helper function \code{tune.hcut} which performs dimension
     reduction prior to fitting.  See examples below.}
 
   \item{bsf}{Best split first (BSF) empirical risk minimization
     strategy. Accepted values are \code{"oob"} and \code{"inbag"}.
-    The default is \code{"oob"} when \code{hcut}>0 and
-    \code{"inbag"} otherwise. Using OOB (out-of-bag) empirical risk
-    minimization can improve robustness, but it can also optimistically
-    bias OOB error estimates. Setting \code{bsf="inbag"} gives pure
-    inbag empirical risk minimization. If \code{filter} is supplied
-    using \code{tune.hcut} and \code{bsf} is omitted, the stored
-    tuning value is used.}
+    The default uses "inbag" unless \code{hcut}>0 and \code{node.center}
+    is \code{FALSE}.  Setting \code{bsf="inbag"} uses 
+    inbag empirical risk minimization and therefore produces the most
+    releastic OOB error rates.  This setting is suitable when
+    \code{node.center} is \code{TRUE} as this is the most robust version
+    of SGTs.  Otherwise, use \code{bsf="oob"} which is a guardrail to
+    avoid numerical problems especially for larger \code{hcut} values;
+    however this yields optimistic OOB error.}
   
   \item{keep.only}{Character vector specifying the features of interest.
   The data is pre-filtered to keep only these requested variables.
@@ -119,6 +127,23 @@ rfsgt(formula,
   \item{do.trace}{Number of seconds between updates to the user on
     approximate time to completion.}
 
+  \item{node.center}{Logical value specifying whether to center covariates
+    within each node before forming powers and products for the lasso.
+    Default is \code{TRUE}. When \code{filter} is supplied by
+    \code{tune.hcut}, an omitted value is inherited from the tuning
+    result. Ignored for \code{hcut=0}.}
+
+  \item{node.restrict}{Logical value enabling restricted lasso terminal
+    scores. Default is \code{TRUE}. Source coordinates are clamped to
+    the node's inbag ranges before powers and products are formed, and
+    the resulting score is clamped to its inbag response range. In grow
+    mode this applies to OOB predictions and, with \code{bsf="oob"},
+    candidate OOB risks. It applies to both raw and centered dictionaries.
+    Inbag scores, CART terminal predictions, and internal routing scores
+    use ordinary evaluation. Ignored for \code{hcut=0}. The setting is
+    saved in the forest and inherited by \code{predict.rfsgt} unless
+    overridden.}
+
   \item{...}{Further arguments passed to \command{cdlasso} and
     \command{rfsrc}.}
   
@@ -129,13 +154,13 @@ rfsgt(formula,
 
   Super Greedy Trees (SGTs) are tree-based models that extend ordinary
   CART-style splitting in a fundamental way.  In a standard tree, a
-  split typically tests one variable at a time, so tilted, curved, or
+  split typically tests one variable at a time; hence tilted, curved, or
   interaction-driven decision boundaries must be approximated by many
-  small axis-aligned cuts.  SGTs instead learn a sparse \emph{score}
+  small axis-aligned cuts.  SGTs instead estimate a sparse \emph{score}
   inside a node and then split the node using that score.  This allows
-  a split to depend on several variables at once, so the fitted tree can
-  represent hyperplane, elliptical, hyperboloid, and other higher-order
-  geometric boundaries much more directly.
+  a split to depend on several variables at once; the fitted tree can
+  therefore represent hyperplane, elliptical, hyperboloid, and other
+  higher-order geometric boundaries much more directly.
 
   Operationally, the procedure is organized in stages.  First, a family of
   candidate score functions is chosen through \code{hcut}.  Second, within
@@ -144,7 +169,7 @@ rfsgt(formula,
   on that score is searched for the best split.  The resulting daughter
   nodes are then re-fit and compared using empirical risk.  In this way,
   the difficult multivariate split problem is converted into a manageable
-  one-dimensional threshold search along a learned score.
+  one-dimensional threshold search along an estimated score.
 
   Tree growth uses a \emph{best split first} (BSF) strategy.  Rather than
   expanding nodes in strict depth-first or breadth-first order, BSF scans
@@ -168,15 +193,15 @@ rfsgt(formula,
 
   An equally important feature of SGTs is that the fitted forest is not
   only a prediction device.  Because each split score and each terminal-node
-  predictor is a sparse lasso model, the forest also carries local
+  predictor is a sparse lasso model, the forest also stores local
   coefficient information.  For a given observation, each tree contributes
   the coefficient vector from the terminal node containing that
   observation, and averaging across trees yields forest-level beta
   summaries that are usually more stable than the coefficients from any
   single tree.  These beta values are local and data-adaptive: they can
-  change from one region of the feature space to another, so they should
-  be viewed as coefficient functions rather than a single global
-  regression vector.
+  change from one region of the feature space to another; they should
+  therefore be viewed as coefficient functions rather than a single
+  global regression vector.
 
   This gives SGTs a genuinely hybrid character.  The partition of the
   feature space is nonparametric, as in a tree or forest, but within each
@@ -189,7 +214,12 @@ rfsgt(formula,
   In many applications, these summaries can be as informative as the
   prediction itself because they show which variables, nonlinear terms,
   and interactions are driving the fitted value near the observation of
-  interest.
+  interest.  For centered fits, \code{get.beta} expands each node
+  polynomial in the original coordinates before averaging; hence the
+  coefficients and contributions are in the units of the data, and the
+  change made by the restricted score is reported as a separate
+  \code{response.adjustment}.  For new-data explanations, pass the
+  original grow object through \code{get.beta(pred, grow = fit)}.
 
   
   Parametric models used for splitting are indexed by \code{hcut}
@@ -272,6 +302,25 @@ rfsgt(formula,
   reuses held-out data, however, users should remember that the reported
   OOB error can then be mildly optimistic.
 
+  A fourth safeguard is the restricted score, \code{node.restrict}.  A
+  lasso terminal node predicts with a polynomial estimated from its
+  inbag cases.  An observation routed to the node can lie outside the
+  region those cases occupy, and there a retained square or product
+  takes values no inbag case produced; the prediction can then leave the
+  response range by orders of magnitude, most often in small trees and
+  at larger \code{hcut}.  With \code{node.restrict=TRUE} (the default)
+  the polynomial is evaluated at the nearest point of the node's inbag
+  box and the result is confined to the node's inbag response range.
+  Inbag cases are evaluated as before; growth, routing and inbag
+  predictions are therefore unchanged, and the restriction acts on the OOB ensemble
+  and error rate, on the OOB risks of candidate daughters when
+  \code{bsf="oob"}, and on new data.  Over twelve regression datasets
+  it removed every failure of small trees and left the error of large
+  trees unchanged; hence tree size can be chosen for speed.  With it,
+  \code{hcut} values of 2 to 4 were more accurate than \code{hcut=1}
+  and than CART on average.  \code{node.restrict=FALSE} reproduces the
+  evaluation of earlier versions.
+
   From a practical point of view, the main tuning parameters have clear
   roles.  Use \code{hcut} to control cut richness, \code{treesize} and
   \code{nodesize} to control tree complexity, \code{filter} or
@@ -284,7 +333,11 @@ rfsgt(formula,
   \code{predict.rfsgt}.  Users interested in the local parametric
   structure can query the same fitted forest with \code{get.beta} to
   recover beta summaries and partial contributions without fitting a
-  separate surrogate model.
+  separate surrogate model.  For that purpose grow shallow trees, with
+  nodes of about 100 cases or more: the terminal coefficients are
+  shrunk by the lasso and attenuated by the selection of the splits in
+  small nodes, while the prediction error is insensitive to tree size
+  with the restricted score (see \code{get.beta}).
 
 }
 
@@ -315,6 +368,11 @@ rfsgt(formula,
 
     \item{\code{hcut}}{Final \code{hcut} value used to construct the
       splitting model.}
+
+    \item{\code{node.center}}{Value of the \code{node.center} option.}
+
+    \item{\code{node.restrict}}{Value of the \code{node.restrict} option,
+      also saved in \code{forest$node.restrict}.}
 
     \item{\code{splitrule}}{Split rule used by the forest.}
 
@@ -412,17 +470,20 @@ rfsgt(formula,
 }
 
 \references{
-  
-  Ishwaran H. (2025).  Super greedy trees.  To appear in Artificial
-  Intelligence Review.
-  
+
+  Ishwaran H. (2026).  Super greedy trees.  \emph{Artificial
+  Intelligence Review}, 59:142.  \doi{10.1007/s10462-026-11541-6}
+
 }
 
 \seealso{
 
   \command{\link{cdlasso}},
+  \command{\link{cv.rfsgt}},
+  \command{\link{get.beta}},
+  \command{\link{plot.rfsgt}},
   \command{\link{predict.rfsgt}}
-  
+
 }
 
 
@@ -451,8 +512,10 @@ if (requireNamespace("mlbench", quietly = TRUE)) {
 ## load the data
 data(BostonHousing, package = "mlbench")
 
-## default basic call
-print(rfsgt(medv~., BostonHousing))
+## hcut=4: linear, quadratic, pairwise, plus all degree 3 polynomials
+## (the default is hcut=2; both apply the filter and the restricted score)
+o <- rfsgt(medv~., BostonHousing, hcut=4)
+print(o)
 
 ## variable selection
 sort(vimp.rfsgt(medv~.,BostonHousing))
@@ -461,8 +524,12 @@ sort(vimp.rfsgt(medv~.,BostonHousing))
 print(rfsgt(medv~., BostonHousing, hcut=0))
 print(rfsgt(medv~., BostonHousing, hcut=0, nodesize=1))
 
-## hcut=1 with smaller nodesize
-print(rfsgt(medv~., BostonHousing, nodesize=1))
+## hcut=3 with smaller nodesize
+print(rfsgt(medv~., BostonHousing, hcut=3, nodesize=1))
+
+## the OOB error above is optimistic because the filter saw every case;
+## cross-validation refits the filter inside each fold (see cv.rfsgt)
+print(cv.rfsgt(medv~., BostonHousing, hcut=3))
 
 ## ------------------------------------------------------------
 ##
@@ -497,10 +564,17 @@ print(rfsgt(medv~., Boston, hcut=3))
 ## load the data
 data(Ozone, package = "mlbench")
 
-print(rfsgt(V4~., na.omit(Ozone), hcut=0, nodesize=1))
-print(rfsgt(V4~., na.omit(Ozone), hcut=1))
-print(rfsgt(V4~., na.omit(Ozone), hcut=2))
-print(rfsgt(V4~., na.omit(Ozone), hcut=3))
+## remove missing values, convert factors to integers
+o <- data.frame(data.matrix(na.omit(Ozone)))
+
+## try different hcut values
+## note the shallow trees; but performance is good
+print(rfsgt(V4~., o, hcut=0, treesize=6))
+print(rfsgt(V4~., o, hcut=1, treesize=6))
+print(rfsgt(V4~., o, hcut=2, treesize=6))
+print(rfsgt(V4~., o, hcut=3, treesize=6))
+print(rfsgt(V4~., o, hcut=4, treesize=6))
+print(rfsgt(V4~., o, hcut=5, treesize=6))
 
 }
 
@@ -543,49 +617,45 @@ rO <- lapply(0:4, function(hcut) {
 })
 
 ## nice little wrapper for plotting results
-if (library("interp", logical.return = TRUE)) {
-  ## nice little wrapper for plotting results
-  plot.image <- function(x, y, z, linear=TRUE, nlevels=40, points=FALSE) {
-    xo <- x; yo <- y
-    so <- interp(x=x, y=y, z=z, linear=linear, nx=nlevels, ny=nlevels)
-    x <- so$x; y <- so$y; z <- so$z
-    xlim <- ylim <- range(c(x, y), na.rm = TRUE, finite = TRUE)
-    z[is.infinite(z)] <- NA
-    zlim <- q <- quantile(z, c(.01, .99), na.rm = TRUE) 
-    z[z<=q[1]] <- q[1]
-    z[z>=q[2]] <- q[2]
-    levels <- pretty(zlim, nlevels)
-    col <- hcl.colors(length(levels)-1, "YlOrRd", rev = TRUE)
-    plot.new()
-    plot.window(xlim, ylim, "", xaxs = "i", yaxs = "i", asp = NA)
-    .filled.contour(x, y, z, levels, col)
-    axis(1);axis(2)
-    if (points) 
-      points(xo,yo ,pch=16, cex=.25)
-    box()
-    invisible()
-  }
+plot.image <- function(x, y, z, nlevels=40, points=FALSE) {
+  xo <- x; yo <- y
+  x <- unique(x); y <- unique(y)
+  ## X2 varies fastest within each X1 block of x.tst.
+  z <- matrix(z, nrow=length(x), ncol=length(y), byrow=TRUE)
+  xlim <- ylim <- range(c(x, y), na.rm = TRUE, finite = TRUE)
+  z[is.infinite(z)] <- NA
+  zlim <- q <- quantile(z, c(.01, .99), na.rm = TRUE) 
+  z[z<=q[1]] <- q[1]
+  z[z>=q[2]] <- q[2]
+  levels <- pretty(zlim, nlevels)
+  col <- hcl.colors(length(levels)-1, "YlOrRd", rev = TRUE)
+  plot.new()
+  plot.window(xlim, ylim, "", xaxs = "i", yaxs = "i", asp = NA)
+  .filled.contour(x, y, z, levels, col)
+  axis(1);axis(2)
+  if (points) 
+    points(xo,yo ,pch=16, cex=.25)
+  box()
+  invisible()
+}
 
-  oldpar <- par(mfrow=c(3,2))
-  image(x1, x2, truth, xlab="", ylab="")
+oldpar <- par(mfrow=c(3,2))
+image(x1, x2, truth, xlab="", ylab="")
+contour(x1, x2, truth, nlevels = 15, add = TRUE, drawlabels = FALSE)
+mtext(expression(x[1]),1,line=2)
+mtext(expression(x[2]),2,line=2)
+mtext(expression("truth"),3,line=1)
+
+pO <- lapply(0:4, function(j) {
+  plot.image(nl2d.tst[,"X1"],nl2d.tst[,"X2"], predict(rO[[j+1]], nl2d.tst)$predicted)
   contour(x1, x2, truth, nlevels = 15, add = TRUE, drawlabels = FALSE)
   mtext(expression(x[1]),1,line=2)
   mtext(expression(x[2]),2,line=2)
-  mtext(expression("truth"),3,line=1)
+  mtext(paste0("hcut=",j),3,line=1)
+  NULL
+})
 
-  pO <- lapply(0:4, function(j) {
-    plot.image(nl2d.tst[,"X1"],nl2d.tst[,"X2"], predict(rO[[j+1]], nl2d.tst)$predicted)
-    contour(x1, x2, truth, nlevels = 15, add = TRUE, drawlabels = FALSE)
-    mtext(expression(x[1]),1,line=2)
-    mtext(expression(x[2]),2,line=2)
-    mtext(paste0("hcut=",j),3,line=1)
-    NULL
-  })
-
-  par(oldpar)
-
- 
-}
+par(oldpar)
 
 ## ------------------------------------------------------------
 ##
@@ -600,8 +670,8 @@ n <- 500
 dta <- data.frame(mlbench::mlbench.friedman1(n, sd=0))
 
 ## rf versus rfsgt
-o1 <- rfsgt(y~., dta, hcut=0, block.size=1)
-o2 <- rfsgt(y~., dta, hcut=3, block.size=1)
+o1 <- rfsgt(y~., dta, hcut=0)
+o2 <- rfsgt(y~., dta, hcut=3)
 
 ## compute running average of OOB empirical risk
 runavg <- function(x, lag = 8) {
@@ -784,24 +854,24 @@ print(rfsgt(y~.,dta, filter=use.tune.hcut(f, hcut=1)))
 print(rfsgt(y~.,dta, filter=use.tune.hcut(f, hcut=2)))
 print(rfsgt(y~.,dta, filter=use.tune.hcut(f, hcut=3)))
 
-
 ## ------------------------------------------------------------
 ##
 ## get local beta values and partial contributions
 ##
 ## SGTs are not only predictive; the same fit can be queried
 ## for local parametric summaries.  We use friedman 1 for
-## illustration.
+## illustration.  See get.beta for details
 ##
 ## ------------------------------------------------------------
 
 n <- 100
 dta <- data.frame(mlbench::mlbench.friedman1(n))
 o <- rfsgt(y~., dta, hcut=3, pure.lasso=TRUE, treesize=10)
-bO <- get.beta(o)
-print(str(bO$beta))
-print(str(bO$partial))
-
+b <- get.beta(o)
+## print beta, partial values - remove intercept
+print(head(b$beta[, -1]))
+print(head(b$partial[, -1]))
+partial.beta(b, o)
 }
 }
 }

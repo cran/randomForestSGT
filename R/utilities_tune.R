@@ -26,10 +26,18 @@ tune.hcut <- function(f, data, hcut=3,
                       hcut.threshold=3,
                       nfolds=10,
                       pure.lasso.cv=TRUE,
-                      bsf="oob",
-                      verbose=FALSE) {
+                      bsf="inbag",
+                      verbose=FALSE,
+                      node.center=TRUE) {
+  if (!is.logical(node.center) || length(node.center) != 1L || is.na(node.center)) {
+    stop("node.center must be TRUE or FALSE")
+  }
+  if (!is.numeric(hcut) || length(hcut) != 1L || !is.finite(hcut) ||
+      hcut < 0L || hcut != as.integer(hcut)) {
+    stop("hcut must be one nonnegative integer")
+  }
   ## normalize the BSF empirical risk strategy used during CV
-  bsf <- get.bsf(bsf, default = "oob", warn = TRUE)
+  bsf <- get.bsf(bsf, warn = TRUE)
   ## hcut sequence to be evaluated
   hcut.max <- hcut
   hcutSeq <- 0:hcut.max
@@ -37,6 +45,11 @@ tune.hcut <- function(f, data, hcut=3,
   o.stump <- get.stump(f, data)
   ## hot-encode the data
   x <- get.hotencode(o.stump$xvar)
+  N <- nrow(x)
+  if (!is.numeric(nfolds) || length(nfolds) != 1L || !is.finite(nfolds) ||
+      nfolds < 2L || nfolds > N || nfolds != as.integer(nfolds)) {
+    stop("nfolds must be an integer between 2 and the number of observations")
+  }
   ## pull yvar and redefine the data using the hot-encoded X
   yvar.names <- o.stump$yvar.names
   f <- as.formula(paste(yvar.names, "~."))
@@ -44,26 +57,30 @@ tune.hcut <- function(f, data, hcut=3,
   colnames(data) <- c(yvar.names, colnames(x))
   ## fast filtering
   if (length(colnames(x)) > p.filter) {
-      if (isTRUE(verbose)) {
-          message("preliminary dimension reduction used for large p\n")
-      }
-      filterS <- c(yvar.names, filter.rfsgt(f, data, hcut=1, treesize=treesize))
+    if (isTRUE(verbose)) {
+      cat("preliminary dimension reduction used for large p\n")
+    }
+    filterS <- c(yvar.names, filter.rfsgt(f, data, hcut=1, treesize=treesize,
+                                         node.center=node.center))
   }
   else {
     filterS <- c(yvar.names, colnames(x))
   }
   if (hcut.max >= hcut.threshold) {
     filterX <- unique(c(filterS,
-      filter.rfsgt(f, data[, filterS, drop=FALSE], hcut=hcut.threshold, treesize=treesize, original=TRUE)))
+      filter.rfsgt(f, data[, filterS, drop=FALSE], hcut=hcut.threshold,
+                   treesize=treesize, original=TRUE,
+                   node.center=node.center)))
   }
   ## dimension reduction for each hcut
   dots <- list()
   dots$ntree <- 1
   dots$tune <- FALSE
   dots$bootstrap <- "none"
+  dots$node.center <- node.center
   xd.info <- lapply(hcutSeq, function(hcut) {
     if (isTRUE(verbose)) {
-        message("dimension reduction, hcut:", hcut, "\n")
+      cat("dimension reduction, hcut:", hcut, "\n")
     }
     o <- do.call("rfsgt", c(list(f,
       if (hcut < hcut.threshold) data[, filterS, drop=FALSE] else data[, filterX, drop=FALSE], hcut=hcut), dots))
@@ -77,47 +94,76 @@ tune.hcut <- function(f, data, hcut=3,
   })
   xd <- lapply(xd.info, function(z) {z$x})
   term.map.all <- lapply(xd.info, function(z) {z$term.map})
-  ## verbose
   if (verbose) {
     cat("filtered variables by hcut\n")
-    xdn <- lapply(xd, function(x){colnames(x)})
+    xdn <- lapply(xd, function(x) {colnames(x)})
     names(xdn) <- hcutSeq
     print(xdn)
   }
-  ## set the parameters for hcut optimization
-  ## hcut = 1    ----> we fix the baselearners
-  ## bsf = "oob" ----> used for stability
-  N <- nrow(x)
+  ## Draw folds after screening, retaining the existing tuning workflow.
   folds <- cv.folds(N, nfolds)
   dots <- list()
-  dots$hcut <- 1
   dots$ntree <- ntree
   dots$treesize <- treesize
   dots$bsf <- bsf
-  dots$tune <- dots$filter <- FALSE
-  if (ntree==1) {
+  dots$node.center <- node.center
+  dots$tune <- FALSE
+  if (ntree == 1) {
     dots$bootstrap <- "none"
   }
-  ## !! pure.lasso parameter !!
   dots$pure.lasso <- pure.lasso.cv
   ## cv-loop
   cv <- data.frame(do.call(rbind, lapply(seq_along(hcutSeq), function(k) {
     if (verbose) cat("cv hcut:", hcutSeq[k], "\n")
+    dots.k <- dots
+    if (node.center) {
+      ## Keep sources and term maps so products are formed within each node.
+      ## The hcut=0 candidate retains the existing linear screening proxy.
+      hcut.cv <- max(1L, hcutSeq[k])
+      filter.k <- colnames(xd[[k]])
+      attr(filter.k, "formula") <- filter.baselearner.workhorse(filter.k)
+      attr(filter.k, "term.map") <- term.map.all[[k]]
+      attr(filter.k, "hcut") <- hcut.cv
+      attr(filter.k, "bsf") <- bsf
+      attr(filter.k, "node.center") <- node.center
+      class(filter.k) <- "tune.hcut"
+      dots.k$hcut <- hcut.cv
+      dots.k$filter <- filter.k
+    }
+    else {
+      ## The uncentered procedure fits the prepared columns at hcut=1.
+      dots.k$hcut <- 1
+      dots.k$filter <- FALSE
+    }
     cvk <- sapply(folds, function(tst) {
       trn <- setdiff(1:N, tst)
-      d.trn <- data.frame(data[trn, yvar.names, drop=FALSE],xd[[k]][trn,, drop=FALSE])
-      x.tst <- xd[[k]][tst,,drop=FALSE]
-      o <- do.call("rfsgt", c(list(f, d.trn), dots))
-      mean((predict.rfsgt(o, x.tst)$predicted - data[tst, yvar.names])^2, na.rm=TRUE)
+      if (node.center) {
+        d.trn <- data[trn, , drop=FALSE]
+        x.tst <- x[tst, , drop=FALSE]
+      }
+      else {
+        d.trn <- data.frame(data[trn, yvar.names, drop=FALSE], xd[[k]][trn, , drop=FALSE])
+        x.tst <- xd[[k]][tst, , drop=FALSE]
+      }
+      o <- do.call("rfsgt", c(list(f, d.trn), dots.k))
+      if (node.center) {
+        prediction <- as.numeric(predict.rfsgt(o, x.tst)$predicted)
+        if (length(prediction) != length(tst) || any(!is.finite(prediction))) {
+          stop("missing or nonfinite tuning-CV predictions for hcut=", hcutSeq[k])
+        }
+        mean((prediction - data[tst, yvar.names])^2)
+      }
+      else {
+        mean((predict.rfsgt(o, x.tst)$predicted - data[tst, yvar.names])^2, na.rm=TRUE)
+      }
     })
-    c(hcutSeq[k], mean(cvk, na.rm=TRUE), sd(cvk, na.rm=TRUE) / sqrt(nfolds))
+    c(hcutSeq[k], mean(cvk, na.rm=!node.center),
+      sd(cvk, na.rm=!node.center) / sqrt(nfolds))
   })))
   colnames(cv) <- c("hcut", "err", "serr")
-  ## verbose
   if (verbose) print(cv)
-  ## identify optimal hcut 
+  ## identify optimal hcut
   idx <- which.min(cv[, 2])[1]
-  ## verbose
   if (verbose) cat(paste0("optimal hcut="), hcutSeq[idx], "\n")
   ## return the goodies
   filter <- colnames(xd[[idx]])
@@ -128,7 +174,11 @@ tune.hcut <- function(f, data, hcut=3,
   attr(filter, "term.map") <- term.map.all[[idx]]
   attr(filter, "term.map.all") <- term.map.all
   attr(filter, "cv") <- cv
+  if (node.center) {
+    attr(filter, "folds") <- folds
+  }
   attr(filter, "bsf") <- bsf
+  attr(filter, "node.center") <- node.center
   attr(filter, "hcut") <- hcutSeq[idx]
   attr(filter, "hcutSeq") <- hcutSeq
   class(filter) <- "tune.hcut"
@@ -168,9 +218,8 @@ get.xvar.org.names <- function(xvar.names, xmap = NULL) {
 get.term.info <- function(term, xmap = NULL,
                           sqchar = "_SQ2_", ichar = "_I_") {
   ## exact-match path: if the term already exists as a column in x, then it is
-  ## an atomic feature for this design.  This matters for tune.hcut() CV, where
-  ## rfsgt() is fit on an already-prepared baselearner matrix (for example
-  ## columns like x1_SQ2_ or x1_I_x2 should not be decomposed further).
+  ## an atomic feature for this design.  User-supplied columns such as
+  ## x1_SQ2_ or x1_I_x2 are not decomposed based on their names alone.
   if (!is.null(xmap)) {
     xvar.org.names <- unique(names(xmap)[sapply(xmap, function(xx) {
       term %in% xx

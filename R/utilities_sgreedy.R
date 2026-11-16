@@ -90,6 +90,91 @@ get.experimental.bits  <- function(experimental.bits, hcut) {
   }
   return (result)
 }
+get.basis.active.bits <- function(basis.active) {
+    if (isTRUE(basis.active)) {
+        result <- 2^9
+    }
+    else {
+        result <- 0
+    }
+    return (result)
+}
+## option bit for support-restricted lasso terminal predictions
+get.node.restrict.bits <- function(node.restrict) {
+  if (!is.logical(node.restrict) || length(node.restrict) != 1L || is.na(node.restrict)) {
+    stop("node.restrict must be TRUE or FALSE")
+  }
+  if (node.restrict) as.integer(2^10) else 0L
+}
+## serialize source values and retained terms for node-local basis construction
+make.basis.payload <- function(xvar.source, term.map, term.names, hcutCnt,
+                               node.center = TRUE) {
+  if (!is.logical(node.center) || length(node.center) != 1L || is.na(node.center)) {
+    stop("node.center must be TRUE or FALSE")
+  }
+  if (!is.term.map(term.map) || nrow(term.map) == 0L) {
+    stop("term.map is required for the node basis")
+  }
+  if (nrow(term.map) != hcutCnt ||
+      !identical(as.character(term.map$term), as.character(term.names))) {
+    stop("term.map does not match the native beta count and order")
+  }
+  source.names <- colnames(xvar.source)
+  if (is.null(source.names) || anyNA(source.names) ||
+      any(!nzchar(source.names)) || anyDuplicated(source.names)) {
+    stop("node basis source columns must have unique, nonempty names")
+  }
+  parent.list <- lapply(term.map$xvar.names, as.character)
+  power.list <- term.map$xvar.power
+  q <- lengths(parent.list, use.names = FALSE)
+  if (any(q < 1L) ||
+      !identical(q, lengths(power.list, use.names = FALSE)) ||
+      !is.numeric(term.map$order) || anyNA(term.map$order) ||
+      any(q != term.map$order)) {
+    stop("term.map order, parent and power lengths disagree")
+  }
+  valid.power <- vapply(power.list, function(power) {
+    (is.integer(power) || is.double(power)) &&
+      all(is.finite(power) & power >= 1 & power == trunc(power) &
+          power <= .Machine$integer.max)
+  }, logical(1))
+  if (!all(valid.power)) {
+    stop("term.map parent powers must be positive integers")
+  }
+  degree <- vapply(power.list, sum, numeric(1))
+  if (!is.numeric(term.map$degree) || anyNA(term.map$degree) ||
+      any(degree != term.map$degree)) {
+    stop("term.map degree disagrees with its parent powers")
+  }
+  parent.names <- unlist(parent.list, use.names = FALSE)
+  if (anyNA(parent.names) || any(!nzchar(parent.names))) {
+    stop("term.map parent names must be nonempty and nonmissing")
+  }
+  missing.parents <- setdiff(parent.names, source.names)
+  if (length(missing.parents) > 0L) {
+    stop("cannot construct the node basis; missing source columns: ",
+         paste(missing.parents, collapse = ", "))
+  }
+  ## Keep the original hot-encoded source order, including filtered-out parents.
+  basis.source.names <- source.names[source.names %in% parent.names]
+  xvar.basis <- xvar.source[, basis.source.names, drop = FALSE]
+  parent.index <- as.integer(match(parent.names, basis.source.names))
+  parent.power <- as.integer(unlist(power.list, use.names = FALSE))
+  term.offset <- c(1, 1 + cumsum(as.double(q)))
+  if (tail(term.offset, 1L) > .Machine$integer.max) {
+    stop("node basis parent count exceeds the native integer limit")
+  }
+  list(
+    active = 1L,
+    p.source = as.integer(ncol(xvar.basis)),
+    xvar.basis = as.double(as.vector(data.matrix(xvar.basis))),
+    p.term = as.integer(nrow(term.map)),
+    term.offset = as.integer(term.offset),
+    parent.index = parent.index,
+    parent.power = parent.power,
+    center.mask = rep.int(as.integer(node.center), ncol(xvar.basis))
+  )
+}
 get.lasso <- function(user.option, n, n.xvar) {
   if (is.null(user.option$nlambda)) {
     weights <- NULL
@@ -148,7 +233,9 @@ get.lot <- function(hcut = 1,
         min(maxsize, max(200, n / 5))
       }
       else {
-        min(100, n/5)
+        ## with the restricted score, 25 terminal nodes matched larger trees on
+        ## average over twelve datasets and grow faster
+        min(25, n / 5)
       }
     }
   }

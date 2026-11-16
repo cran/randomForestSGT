@@ -4,9 +4,14 @@
 ##
 ##-------------------------------------------------------------------
 ## custom filtering used by workhorse
-filter.custom.rfsgt <- function(f, dta, hcut=1, method="liberal", fast=TRUE, ...) {
+filter.custom.rfsgt <- function(f, dta, hcut=1, method="liberal", fast=TRUE,
+                                node.center=TRUE, ...) {
+  if (!is.logical(node.center) || length(node.center) != 1L || is.na(node.center)) {
+    stop("node.center must be TRUE or FALSE")
+  }
   ## hidden options
   dots <- list(...)
+  dots$node.center <- node.center
   dots$membership <- FALSE
   if (fast) {
     dots$ntree <- 1
@@ -30,7 +35,11 @@ filter.custom.rfsgt <- function(f, dta, hcut=1, method="liberal", fast=TRUE, ...
 filter.rfsgt <- function(f, dta, ntree=50, hcut=1, treesize=3, nfolds=5,
                          method = c("min", "conserve", "liberal")[3],
                          fast = TRUE, original = FALSE, 
-                         maxit=100, eps=.05, names.only=TRUE, ...) {
+                         maxit=100, eps=.05, names.only=TRUE,
+                         node.center=TRUE, ...) {
+  if (!is.logical(node.center) || length(node.center) != 1L || is.na(node.center)) {
+    stop("node.center must be TRUE or FALSE")
+  }
   ## hot-encode x and create the base learner x matrix
   stump <- get.stump(f, dta)
   x <- get.hotencode(stump$xvar)
@@ -49,15 +58,49 @@ filter.rfsgt <- function(f, dta, ntree=50, hcut=1, treesize=3, nfolds=5,
     dots$bootstrap <- "none"
   }
   dots$membership <- FALSE
-  ## hereafter we pretend hcut=1
-  ## obtain split-weights for varpro
-  swt <- do.call("vimp.rfsgt", c(list(f, dta, ntree=ntree, hcut=1, treesize=treesize,
-               nfolds=nfolds, maxit=maxit, eps=eps), dots))
-  ## call varpro using custom split-weights
-  checkfail <- tryCatch({capture.output(vmp <- cv.varpro(f, dta,
-          split.weight.custom=swt))}, error=function(ex){NULL})
-  ## return vimp.rfsgt if varpro fails 
-  if (is.null(checkfail)) {
+  dots$node.center <- node.center && hcut > 0L
+  ## Obtain SGT split weights for the existing global varPro screen.
+  ## Centered SGT fits must receive source columns and the actual hcut:
+  ## completed raw powers/products cannot stand in for their parents.
+  if (isTRUE(dots$node.center)) {
+    source.data <- data.frame(stump$yvar, x)
+    colnames(source.data) <- c(stump$yvar.names, colnames(x))
+    dots$p <- nrow(term.map)
+    source.formula <- as.formula(paste(stump$yvar.names, "~."))
+    swt <- do.call("vimp.rfsgt", c(list(
+      source.formula, source.data, ntree=ntree, hcut=hcut,
+      treesize=treesize, nfolds=nfolds, maxit=maxit, eps=eps), dots))
+  }
+  else {
+    ## Uncentered screening uses the prepared term columns.
+    swt <- do.call("vimp.rfsgt", c(list(f, dta, ntree=ntree, hcut=1,
+      treesize=treesize, nfolds=nfolds, maxit=maxit, eps=eps), dots))
+  }
+  ## varPro still screens the global raw term columns; node.center changes
+  ## the SGT fits supplying its weights, not the varPro model definition.
+  ## The native strength routine can return a C NULL pointer. R then
+  ## warns, and varpro.strength stops. Defer only that warning while the
+  ## existing fallback handles the failed screen; preserve other warnings.
+  ## If cv.varpro nevertheless succeeds, re-signal the original warning.
+  vmp <- NULL
+  native.warnings <- list()
+  checkfail <- tryCatch({
+    capture.output(vmp <- withCallingHandlers(
+      cv.varpro(f, dta, split.weight.custom=swt),
+      warning = function(w) {
+        cl <- conditionCall(w)
+        if (identical(conditionMessage(w), "converting NULL pointer to R NULL") &&
+            is.call(cl) && length(cl) >= 2L &&
+            identical(cl[[1L]], quote(.Call)) &&
+            identical(cl[[2L]], "varProStrength")) {
+          native.warnings[[length(native.warnings) + 1L]] <<- w
+          invokeRestart("muffleWarning")
+        }
+      }
+    ))
+  }, error=function(ex){NULL})
+  ## return vimp.rfsgt if varpro fails or returns no result
+  if (is.null(checkfail) || is.null(vmp)) {
     if (original) {
       attr(swt, "term.map") <- get.term.map.subset(term.map, names(swt))
       attr(swt, "xvar.org.names") <- stump$xvar.names
@@ -69,6 +112,10 @@ filter.rfsgt <- function(f, dta, ntree=50, hcut=1, treesize=3, nfolds=5,
     else {
       return(names(swt[order(swt, decreasing = TRUE)])[1])
     }
+  }
+  ## A successful CV result must not silently hide a native warning.
+  for (w in native.warnings) {
+    warning(w)
   }
   ## extract cv-varpro vimp
   vmp <- get.vimp(vmp, pretty=FALSE)
@@ -102,7 +149,11 @@ filter.rfsgt <- function(f, dta, ntree=50, hcut=1, treesize=3, nfolds=5,
 ##
 ##-------------------------------------------------------------------
 vimp.rfsgt <- function(f, dta, ntree=50, hcut=1, treesize=3,
-                       nfolds=5, maxit=100, eps=.05, p=NULL, ...) {
+                       nfolds=5, maxit=100, eps=.05, p=NULL,
+                       node.center=TRUE, ...) {
+  if (!is.logical(node.center) || length(node.center) != 1L || is.na(node.center)) {
+    stop("node.center must be TRUE or FALSE")
+  }
   ##-------------------------------------------------------------------
   ##
   ## initialize
@@ -125,6 +176,20 @@ vimp.rfsgt <- function(f, dta, ntree=50, hcut=1, treesize=3,
   yvar.names <- stump$yvar.names
   dta <- data.frame(y, normalize(x))
   colnames(dta) <- c(yvar.names, colnames(x))
+  ## Centered coefficients are fitted on products of normalized SOURCES.
+  ## Put their screening magnitudes on fixed, comparable term scales.
+  ## These are reference scales only; no node coefficients are translated
+  ## or averaged as though they represented one common polynomial origin.
+  if (isTRUE(node.center) && hcut > 0L) {
+    reference.x <- make.baselearner.from.term.map(
+      dta[, colnames(x), drop=FALSE], term.map)
+    reference.x <- as.matrix(reference.x)
+    reference.x <- sweep(reference.x, 2L, colMeans(reference.x), "-")
+    beta.scale <- sqrt(colSums(reference.x^2))
+    if (any(!is.finite(beta.scale))) {
+      stop("nonfinite reference term scales in centered variable screening")
+    }
+  }
   ##-------------------------------------------------------------------
   ##
   ## hidden options
@@ -132,6 +197,7 @@ vimp.rfsgt <- function(f, dta, ntree=50, hcut=1, treesize=3,
   ##
   ##-------------------------------------------------------------------
   dots <- list(...)
+  dots$node.center <- node.center
   dots$tune <- dots$filter <- FALSE
   dots$perf.type <- "none"
   dots$experimental.bits <- as.integer(0)
@@ -160,7 +226,16 @@ vimp.rfsgt <- function(f, dta, ntree=50, hcut=1, treesize=3,
   if (nrow(ar) > 0) {
     beta <- ar[, !(colnames(ar) %in%
       c("treeID", "nodeID", "nodeSZ", "brnodeID","betaZ", "yStar", "yBar", "prnodeID")), drop = FALSE]
+    if (isTRUE(node.center) && hcut > 0L &&
+        (ncol(beta) != length(xvar.names) ||
+         !identical(colnames(beta), as.character(seq_along(xvar.names))))) {
+      stop("native coefficient columns do not match the centered screening term map")
+    }
     beta <- beta[, 1:p, drop = FALSE]
+    if (isTRUE(node.center) && hcut > 0L) {
+      beta <- sweep(as.matrix(beta), 2L, beta.scale[seq_len(p)], "*")
+      beta[, beta.scale[seq_len(p)] == 0] <- 0
+    }
     beta <- colMeans(abs(beta), na.rm = TRUE)
   }
   else {

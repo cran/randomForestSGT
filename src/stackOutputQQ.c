@@ -22,18 +22,30 @@ void stackTNQualitativeObjectsOutput(char mode) {
   uint treeID;
   if (RF_optHigh & OPT_TERM_OUTG) {
     localSize = RF_totalTermCount;
-    SG_rmbrTNodeCT_ = (uint*) stackAndProtect(RF_auxDimConsts, mode, &RF_nativeIndex, NATIVE_TYPE_INTEGER, SG_RMBR_TN_CT, localSize, 0, SG_sexpStringOutgoing, NULL, 1, localSize);
-    SG_ombrTNodeCT_ = (uint*) stackAndProtect(RF_auxDimConsts, mode, &RF_nativeIndex, NATIVE_TYPE_INTEGER, SG_OMBR_TN_CT, localSize, 0, SG_sexpStringOutgoing, NULL, 1, localSize);
+    SG_rmbrTNodeCT_ = (uint*) stackAndProtect(RF_auxDimConsts, mode, &RF_nativeIndex, NATIVE_TYPE_INTEGER, SG_RMBR_TN_CT, localSize, 0, SG_sexpStringOutgoing, NULL, 1,
+      (const AuxiliaryDimension[]) {
+        [1] = {RF_AUX_DIM_FIXED, localSize}
+      });
+    SG_ombrTNodeCT_ = (uint*) stackAndProtect(RF_auxDimConsts, mode, &RF_nativeIndex, NATIVE_TYPE_INTEGER, SG_OMBR_TN_CT, localSize, 0, SG_sexpStringOutgoing, NULL, 1,
+      (const AuxiliaryDimension[]) {
+        [1] = {RF_AUX_DIM_FIXED, localSize}
+      });
     SG_rmbrTNodeCT_ --;
     SG_ombrTNodeCT_ --;
     localSize = (ulong) RF_ntree * RF_bootstrapSize;
-    SG_rmbrTNodeID_ = (uint*) stackAndProtect(RF_auxDimConsts, mode, &RF_nativeIndex, NATIVE_TYPE_INTEGER, SG_RMBR_TN_ID,  localSize, 0, SG_sexpStringOutgoing, NULL, 1, localSize);
+    SG_rmbrTNodeID_ = (uint*) stackAndProtect(RF_auxDimConsts, mode, &RF_nativeIndex, NATIVE_TYPE_INTEGER, SG_RMBR_TN_ID,  localSize, 0, SG_sexpStringOutgoing, NULL, 1,
+      (const AuxiliaryDimension[]) {
+        [1] = {RF_AUX_DIM_FIXED, localSize}
+      });
     localSize = 0;
     for (treeID = 1; treeID <= RF_ntree; treeID++) {
       localSize += RF_oobSize[treeID];
     }
     if (localSize > 0) {
-      SG_ombrTNodeID_ = (uint*) stackAndProtect(RF_auxDimConsts, mode, &RF_nativeIndex, NATIVE_TYPE_INTEGER, SG_OMBR_TN_ID,  localSize, 0, SG_sexpStringOutgoing, NULL, 1, localSize);
+      SG_ombrTNodeID_ = (uint*) stackAndProtect(RF_auxDimConsts, mode, &RF_nativeIndex, NATIVE_TYPE_INTEGER, SG_OMBR_TN_ID,  localSize, 0, SG_sexpStringOutgoing, NULL, 1,
+        (const AuxiliaryDimension[]) {
+          [1] = {RF_AUX_DIM_FIXED, localSize}
+        });
       SG_ombrTNodeID_ --;
     }
     else {
@@ -41,11 +53,18 @@ void stackTNQualitativeObjectsOutput(char mode) {
       for (uint treeID = 1; treeID <= RF_ntree; treeID++) {
         localSize += RF_tLeafCount[treeID];
       }
-      SG_ombrTNodeID_ = (uint*) stackAndProtect(RF_auxDimConsts, mode, &RF_nativeIndex, NATIVE_TYPE_INTEGER, SG_OMBR_TN_ID,  localSize, 0, SG_sexpStringOutgoing, NULL, 1, localSize);
+      SG_ombrTNodeID_ = (uint*) stackAndProtect(RF_auxDimConsts, mode, &RF_nativeIndex, NATIVE_TYPE_INTEGER, SG_OMBR_TN_ID,  localSize, 0, SG_sexpStringOutgoing, NULL, 1,
+        (const AuxiliaryDimension[]) {
+          [1] = {RF_AUX_DIM_FIXED, localSize}
+        });
       SG_ombrTNodeID_ --;
     }
     localSize = (ulong) RF_ntree * RF_observationSize;
-    SG_ambrTNodeID_ = (uint*) stackAndProtect(RF_auxDimConsts, mode, &RF_nativeIndex, NATIVE_TYPE_INTEGER, SG_AMBR_TN_ID,  localSize, 0, SG_sexpStringOutgoing, &SG_ambrTNodeID_ptr, 2, RF_ntree, RF_observationSize);
+    SG_ambrTNodeID_ = (uint*) stackAndProtect(RF_auxDimConsts, mode, &RF_nativeIndex, NATIVE_TYPE_INTEGER, SG_AMBR_TN_ID,  localSize, 0, SG_sexpStringOutgoing, &SG_ambrTNodeID_ptr, 2,
+      (const AuxiliaryDimension[]) {
+        [1] = {RF_AUX_DIM_FIXED, RF_ntree},
+        [2] = {RF_AUX_DIM_FIXED, RF_observationSize}
+      });
     SG_rmbrTNodeID_ --;
     SG_ambrTNodeID_ --;
   }
@@ -54,7 +73,11 @@ void stackTNQualitativeObjectsOutputTest(char mode) {
   ulong localSize;
   if (RF_optHigh & OPT_TERM_OUTG) {
     localSize = (ulong) RF_ntree * RF_fobservationSize;
-    SG_ambrTNodeID_ = (uint*) stackAndProtect(RF_auxDimConsts, mode, &RF_nativeIndex, NATIVE_TYPE_INTEGER, SG_AMBR_TN_ID,  localSize, 0, SG_sexpStringOutgoing, &SG_ambrTNodeID_ptr, 2, RF_ntree, RF_fobservationSize);
+    SG_ambrTNodeID_ = (uint*) stackAndProtect(RF_auxDimConsts, mode, &RF_nativeIndex, NATIVE_TYPE_INTEGER, SG_AMBR_TN_ID,  localSize, 0, SG_sexpStringOutgoing, &SG_ambrTNodeID_ptr, 2,
+      (const AuxiliaryDimension[]) {
+        [1] = {RF_AUX_DIM_FIXED, RF_ntree},
+        [2] = {RF_AUX_DIM_FIXED, RF_fobservationSize}
+      });
     SG_ambrTNodeID_ --;
   }
 }
@@ -65,7 +88,7 @@ void writeTNQualitativeObjectsOutput(char mode) {
   uint      nodeID;
   uint      genMembrSize;
   uint     *genMembrIndx;
-  uint offset, offsetCT, offsetID_rmbr, offsetID_ombr;
+  ulong offset, offsetCT, offsetID_rmbr, offsetID_ombr;
   uint treeID;
   uint i, k;
   if (RF_optHigh & OPT_TERM_OUTG) {
@@ -87,12 +110,12 @@ void writeTNQualitativeObjectsOutput(char mode) {
           genMembrSize = termPtr -> oobMembrCount;
           genMembrIndx = termPtr -> oobMembrIndx;
           for (i = 1; i <= genMembrSize; i++) {
-            SG_ambrTNodeID_ptr[treeID][genMembrIndx[i]] = offset;
+            SG_ambrTNodeID_ptr[treeID][genMembrIndx[i]] = (uint) offset;
           }
           genMembrSize = termPtr -> ibgMembrCount;
           genMembrIndx = termPtr -> ibgMembrIndx;
           for (i = 1; i <= genMembrSize; i++) {
-            SG_ambrTNodeID_ptr[treeID][genMembrIndx[i]] = offset;
+            SG_ambrTNodeID_ptr[treeID][genMembrIndx[i]] = (uint) offset;
           }
         }
       }
@@ -114,7 +137,7 @@ void writeTNQualitativeObjectsOutput(char mode) {
     if (offsetCT != RF_totalTermCount) {
       RF_nativeError("\nRF-SRC:  *** ERROR *** ");
       RF_nativeError("\nRF-SRC:  Inconsistent total terminal count encountered during writing of forest topology.");
-      RF_nativeError("\nRF-SRC:  Offset versus total was:  %20lu, %20lu", offsetCT, RF_totalTermCount);
+      RF_nativeError("\nRF-SRC:  Offset versus total was:  %20llu, %20llu", (unsigned long long) offsetCT, (unsigned long long) RF_totalTermCount);
       RF_nativeError("\nRF-SRC:  Please Contact Technical Support.");
       RF_nativeExit();
     }
@@ -127,12 +150,16 @@ void writeTNQualitativeObjectsOutputTest(char mode) {
   uint      nodeID;
   uint      genMembrSize;
   uint     *genMembrIndx;
-  uint offset;
+  ulong offset;
   uint treeID;
   uint i, k;
   if (RF_optHigh & OPT_TERM_OUTG) {
     offset = 0;
     for (treeID = 1; treeID <= RF_ntree; treeID++) {
+      if (RF_getTree != NULL && RF_getTree[treeID] == 0) {
+        offset += RF_nodeCount[treeID];
+        continue;
+      }
       leafLinkedObjMap = (LeafLinkedObj **) new_vvector(1, RF_tLeafCount[treeID], NRUTIL_LEAFPTR2);
       leafLinkedPtr = RF_leafLinkedObjHead[treeID] -> fwdLink;
       while (leafLinkedPtr != NULL) {
@@ -147,7 +174,7 @@ void writeTNQualitativeObjectsOutputTest(char mode) {
           genMembrSize = termPtr -> tstMembrCount;
           genMembrIndx = termPtr -> tstMembrIndx;
           for (i = 1; i <= genMembrSize; i++) {
-            SG_ambrTNodeID_ptr[treeID][genMembrIndx[i]] = offset;
+            SG_ambrTNodeID_ptr[treeID][genMembrIndx[i]] = (uint) offset;
           }
         }
       }
